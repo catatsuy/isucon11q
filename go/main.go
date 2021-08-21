@@ -1255,7 +1255,7 @@ func postIsuCondition(c echo.Context) error {
 			return c.String(http.StatusBadRequest, "bad request body")
 		}
 
-		values = append(values, fmt.Sprintf("('%s', '%s', %d, '%s', '%s'),", jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message))
+		values = append(values, fmt.Sprintf("('%s', '%s', %d, '%s', '%s')", jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message))
 	}
 
 	sqlInsert = sqlInsert + strings.Join(values, ",")
