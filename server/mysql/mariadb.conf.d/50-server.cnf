@@ -45,7 +45,8 @@ bind-address            = 127.0.0.1
 # * Query Cache Configuration
 #
 #query_cache_limit      = 1M
-query_cache_size        = 16M
+#query_cache_size        = 16M
+query_cache_size = 0
 
 #
 # * Logging and Replication
