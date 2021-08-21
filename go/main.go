@@ -711,6 +711,11 @@ func postIsu(c echo.Context) error {
 		}
 	}
 
+	err = ioutil.WriteFile(frontendContentsPath+"/img/"+jiaIsuUUID, image, 0655)
+	if err != nil {
+		return c.NoContent(http.StatusInternalServerError)
+	}
+
 	tx, err := db.Beginx()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
@@ -719,8 +724,8 @@ func postIsu(c echo.Context) error {
 	defer tx.Rollback()
 
 	_, err = tx.Exec("INSERT INTO `isu`"+
-		"	(`jia_isu_uuid`, `name`, `image`, `jia_user_id`) VALUES (?, ?, ?, ?)",
-		jiaIsuUUID, isuName, image, jiaUserID)
+		"	(`jia_isu_uuid`, `name`, `jia_user_id`) VALUES (?, ?, ?)",
+		jiaIsuUUID, isuName, jiaUserID)
 	if err != nil {
 		mysqlErr, ok := err.(*mysql.MySQLError)
 
@@ -862,6 +867,15 @@ func getIsuIcon(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
+	f, err := os.Open(frontendContentsPath + "/img/" + jiaIsuUUID)
+	if err != nil {
+		return c.String(http.StatusNotFound, "not found: isu")
+	}
+	defer f.Close()
+	image, err = ioutil.ReadAll(f)
+	if err != nil {
+		return c.String(http.StatusNotFound, "not found: isu")
+	}
 	return c.Blob(http.StatusOK, "", image)
 }
 
