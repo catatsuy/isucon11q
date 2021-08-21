@@ -245,11 +245,16 @@ func main() {
 		"main").Stop()
 
 	e := echo.New()
-	e.Debug = true
-	e.Logger.SetLevel(log.DEBUG)
+	if isDev {
+		e.Debug = true
+		e.Logger.SetLevel(log.DEBUG)
 
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
+		e.Use(middleware.Logger())
+		e.Use(middleware.Recover())
+	} else {
+		e.Debug = false
+		e.Logger.SetLevel(log.OFF)
+	}
 
 	e.POST("/initialize", postInitialize)
 
