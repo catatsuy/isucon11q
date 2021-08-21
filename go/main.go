@@ -25,7 +25,6 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
 
-	measure "github.com/najeira/measure"
 	proxy "github.com/shogo82148/go-sql-proxy"
 )
 
@@ -176,10 +175,6 @@ type JIAServiceRequest struct {
 }
 
 func getEnv(key string, defaultValue string) string {
-	defer measure.Start(
-		"getEnv").
-		Stop()
-
 	val := os.Getenv(key)
 	if val != "" {
 		return val
@@ -188,10 +183,6 @@ func getEnv(key string, defaultValue string) string {
 }
 
 func NewMySQLConnectionEnv() *MySQLConnectionEnv {
-	defer measure.Start(
-		"NewMySQLConnectionEnv",
-	).Stop()
-
 	return &MySQLConnectionEnv{
 		Host:     getEnv("MYSQL_HOST", "127.0.0.1"),
 		Port:     getEnv("MYSQL_PORT", "3306"),
@@ -202,28 +193,17 @@ func NewMySQLConnectionEnv() *MySQLConnectionEnv {
 }
 
 func (mc *MySQLConnectionEnv) ConnectDB() (*sqlx.DB, error) {
-	defer measure.Start(
-		"ConnectDB",
-	).Stop()
-
 	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?parseTime=true&loc=Asia%%2FTokyo&interpolateParams=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
 	return sqlx.Open("mysql", dsn)
 }
 
 func (mc *MySQLConnectionEnv) ConnectDBDev() (*sqlx.DB, error) {
-	defer measure.Start(
-		"ConnectDBDev",
-	).Stop()
-
 	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?parseTime=true&loc=Asia%%2FTokyo&interpolateParams=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
 	proxy.RegisterTracer()
 	return sqlx.Open("mysql:trace", dsn)
 }
 
 func init() {
-	defer measure.Start(
-		"init").Stop()
-
 	sessionStore = sessions.NewCookieStore([]byte(getEnv("SESSION_KEY", "isucondition")))
 
 	key, err := ioutil.ReadFile(jiaJWTSigningKeyPath)
@@ -241,9 +221,6 @@ func init() {
 }
 
 func main() {
-	defer measure.Start(
-		"main").Stop()
-
 	e := echo.New()
 	if isDev {
 		e.Debug = true
@@ -279,8 +256,6 @@ func main() {
 	e.GET("/isu/:jia_isu_uuid/condition", getIndex)
 	e.GET("/isu/:jia_isu_uuid/graph", getIndex)
 	e.GET("/register", getIndex)
-
-	e.GET("/debug/measure", getstats)
 	e.Static("/assets", frontendContentsPath+"/assets")
 
 	mySQLConnectionData = NewMySQLConnectionEnv()
@@ -329,22 +304,7 @@ func main() {
 	e.Logger.Fatal(e.Start(serverPort))
 }
 
-func getstats(c echo.Context) error {
-	stats := measure.GetStats()
-
-	fmt.Fprint(c.Response(), "key,count,sum,min,max,avg,rate,p95\n")
-	for _, s := range stats {
-		fmt.Fprintf(c.Response(), "%s,%d,%f,%f,%f,%f,%f,%f\n",
-			s.Key, s.Count, s.Sum, s.Min, s.Max, s.Avg, s.Rate, s.P95)
-	}
-	return nil
-}
-
 func getSession(r *http.Request) (*sessions.Session, error) {
-	defer measure.Start(
-		"getSession",
-	).Stop()
-
 	session, err := sessionStore.Get(r, sessionName)
 	if err != nil {
 		return nil, err
@@ -353,10 +313,6 @@ func getSession(r *http.Request) (*sessions.Session, error) {
 }
 
 func getUserIDFromSession(c echo.Context) (string, int, error) {
-	defer measure.Start(
-		"getUserIDFromSession",
-	).Stop()
-
 	session, err := getSession(c.Request())
 	if err != nil {
 		return "", http.StatusInternalServerError, fmt.Errorf("failed to get session: %v", err)
@@ -383,10 +339,6 @@ func getUserIDFromSession(c echo.Context) (string, int, error) {
 }
 
 func getJIAServiceURL(tx *sqlx.Tx) string {
-	defer measure.Start(
-		"getJIAServiceURL",
-	).Stop()
-
 	var config Config
 	err := tx.Get(&config, "SELECT * FROM `isu_association_config` WHERE `name` = ?", "jia_service_url")
 	if err != nil {
@@ -401,11 +353,6 @@ func getJIAServiceURL(tx *sqlx.Tx) string {
 // POST /initialize
 // サービスを初期化
 func postInitialize(c echo.Context) error {
-	defer measure.Start(
-		"postInitialize",
-	).
-		Stop()
-
 	var request InitializeRequest
 	err := c.Bind(&request)
 	if err != nil {
@@ -439,17 +386,9 @@ func postInitialize(c echo.Context) error {
 // POST /api/auth
 // サインアップ・サインイン
 func postAuthentication(c echo.Context) error {
-	defer measure.Start(
-		"postAuthentication",
-	).Stop()
-
 	reqJwt := strings.TrimPrefix(c.Request().Header.Get("Authorization"), "Bearer ")
 
 	token, err := jwt.Parse(reqJwt, func(token *jwt.Token) (interface{}, error) {
-		defer measure.Start(
-			"postAuthentication-1",
-		).Stop()
-
 		if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok {
 			return nil, jwt.NewValidationError(fmt.Sprintf("unexpected signing method: %v", token.Header["alg"]), jwt.ValidationErrorSignatureInvalid)
 		}
@@ -504,10 +443,6 @@ func postAuthentication(c echo.Context) error {
 // POST /api/signout
 // サインアウト
 func postSignout(c echo.Context) error {
-	defer measure.Start(
-		"postSignout",
-	).Stop()
-
 	_, errStatusCode, err := getUserIDFromSession(c)
 	if err != nil {
 		if errStatusCode == http.StatusUnauthorized {
@@ -537,10 +472,6 @@ func postSignout(c echo.Context) error {
 // GET /api/user/me
 // サインインしている自分自身の情報を取得
 func getMe(c echo.Context) error {
-	defer measure.Start(
-		"getMe").
-		Stop()
-
 	jiaUserID, errStatusCode, err := getUserIDFromSession(c)
 	if err != nil {
 		if errStatusCode == http.StatusUnauthorized {
@@ -562,10 +493,6 @@ func InStatement(count int) string {
 // GET /api/isu
 // ISUの一覧を取得
 func getIsuList(c echo.Context) error {
-	defer measure.Start(
-		"getIsuList",
-	).Stop()
-
 	jiaUserID, errStatusCode, err := getUserIDFromSession(c)
 	if err != nil {
 		if errStatusCode == http.StatusUnauthorized {
@@ -649,10 +576,6 @@ func getIsuList(c echo.Context) error {
 // POST /api/isu
 // ISUを登録
 func postIsu(c echo.Context) error {
-	defer measure.Start(
-		"postIsu",
-	).Stop()
-
 	jiaUserID, errStatusCode, err := getUserIDFromSession(c)
 	if err != nil {
 		if errStatusCode == http.StatusUnauthorized {
@@ -792,10 +715,6 @@ func postIsu(c echo.Context) error {
 // GET /api/isu/:jia_isu_uuid
 // ISUの情報を取得
 func getIsuID(c echo.Context) error {
-	defer measure.Start(
-		"getIsuID",
-	).Stop()
-
 	jiaUserID, errStatusCode, err := getUserIDFromSession(c)
 	if err != nil {
 		if errStatusCode == http.StatusUnauthorized {
@@ -826,10 +745,6 @@ func getIsuID(c echo.Context) error {
 // GET /api/isu/:jia_isu_uuid/icon
 // ISUのアイコンを取得
 func getIsuIcon(c echo.Context) error {
-	defer measure.Start(
-		"getIsuIcon",
-	).Stop()
-
 	jiaUserID, errStatusCode, err := getUserIDFromSession(c)
 	if err != nil {
 		if errStatusCode == http.StatusUnauthorized {
@@ -869,10 +784,6 @@ func getIsuIcon(c echo.Context) error {
 // GET /api/isu/:jia_isu_uuid/graph
 // ISUのコンディショングラフ描画のための情報を取得
 func getIsuGraph(c echo.Context) error {
-	defer measure.Start(
-		"getIsuGraph",
-	).Stop()
-
 	jiaUserID, errStatusCode, err := getUserIDFromSession(c)
 	if err != nil {
 		if errStatusCode == http.StatusUnauthorized {
@@ -915,11 +826,8 @@ func getIsuGraph(c echo.Context) error {
 }
 
 // グラフのデータ点を一日分生成
-func generateIsuGraphResponse(jiaIsuUUID string, graphDate time.Time) ([]GraphResponse, error) {
-	defer measure.Start(
-		"generateIsuGraphResponse",
-	).Stop()
 
+func generateIsuGraphResponse(jiaIsuUUID string, graphDate time.Time) ([]GraphResponse, error) {
 	dataPoints := []GraphDataPointWithInfo{}
 	conditionsInThisHour := []IsuCondition{}
 	timestampsInThisHour := []int64{}
@@ -1026,10 +934,6 @@ func generateIsuGraphResponse(jiaIsuUUID string, graphDate time.Time) ([]GraphRe
 
 // 複数のISUのコンディションからグラフの一つのデータ点を計算
 func calculateGraphDataPoint(isuConditions []IsuCondition) (GraphDataPoint, error) {
-	defer measure.Start(
-		"calculateGraphDataPoint",
-	).Stop()
-
 	conditionsCount := map[string]int{"is_broken": 0, "is_dirty": 0, "is_overweight": 0}
 	rawScore := 0
 	for _, condition := range isuConditions {
@@ -1089,10 +993,6 @@ func calculateGraphDataPoint(isuConditions []IsuCondition) (GraphDataPoint, erro
 // GET /api/condition/:jia_isu_uuid
 // ISUのコンディションを取得
 func getIsuConditions(c echo.Context) error {
-	defer measure.Start(
-		"getIsuConditions",
-	).Stop()
-
 	jiaUserID, errStatusCode, err := getUserIDFromSession(c)
 	if err != nil {
 		if errStatusCode == http.StatusUnauthorized {
@@ -1157,9 +1057,6 @@ func getIsuConditions(c echo.Context) error {
 // ISUのコンディションをDBから取得
 func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, conditionLevel map[string]interface{}, startTime time.Time,
 	limit int, isuName string) ([]*GetIsuConditionResponse, error) {
-	defer measure.Start(
-		"getIsuConditionsFromDB",
-	).Stop()
 
 	conditions := []IsuCondition{}
 	var err error
@@ -1214,10 +1111,6 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 
 // ISUのコンディションの文字列からコンディションレベルを計算
 func calculateConditionLevel(condition string) (string, error) {
-	defer measure.Start(
-		"calculateConditionLevel",
-	).Stop()
-
 	var conditionLevel string
 
 	warnCount := strings.Count(condition, "=true")
@@ -1238,10 +1131,6 @@ func calculateConditionLevel(condition string) (string, error) {
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
-	defer measure.Start(
-		"getTrend",
-	).Stop()
-
 	characterList := []Isu{}
 	err := db.Select(&characterList, "SELECT `character` FROM `isu` GROUP BY `character`")
 	if err != nil {
@@ -1300,24 +1189,12 @@ func getTrend(c echo.Context) error {
 		}
 
 		sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
-			defer measure.Start(
-				"getTrend-1",
-			).Stop()
-
 			return characterInfoIsuConditions[i].Timestamp > characterInfoIsuConditions[j].Timestamp
 		})
 		sort.Slice(characterWarningIsuConditions, func(i, j int) bool {
-			defer measure.Start(
-				"getTrend-2",
-			).Stop()
-
 			return characterWarningIsuConditions[i].Timestamp > characterWarningIsuConditions[j].Timestamp
 		})
 		sort.Slice(characterCriticalIsuConditions, func(i, j int) bool {
-			defer measure.Start(
-				"getTrend-3",
-			).Stop()
-
 			return characterCriticalIsuConditions[i].Timestamp > characterCriticalIsuConditions[j].Timestamp
 		})
 		res = append(res,
@@ -1335,10 +1212,6 @@ func getTrend(c echo.Context) error {
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
-	defer measure.Start(
-		"postIsuCondition",
-	).Stop()
-
 	// TODO: 一定割合リクエストを落としてしのぐようにしたが、本来は全量さばけるようにすべき
 	dropProbability := 0.9
 	if rand.Float64() <= dropProbability {
@@ -1393,9 +1266,6 @@ func postIsuCondition(c echo.Context) error {
 
 // ISUのコンディションの文字列がcsv形式になっているか検証
 func isValidConditionFormat(conditionStr string) bool {
-	defer measure.Start(
-		"isValidConditionFormat",
-	).Stop()
 
 	keys := []string{"is_dirty=", "is_overweight=", "is_broken="}
 	const valueTrue = "true"
@@ -1429,9 +1299,5 @@ func isValidConditionFormat(conditionStr string) bool {
 }
 
 func getIndex(c echo.Context) error {
-	defer measure.Start(
-		"getIndex",
-	).Stop()
-
 	return c.File(frontendContentsPath + "/index.html")
 }
