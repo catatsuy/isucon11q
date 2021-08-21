@@ -576,15 +576,8 @@ func getIsuList(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	tx, err := db.Beginx()
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	defer tx.Rollback()
-
 	isuList := []Isu{}
-	err = tx.Select(
+	err = db.Select(
 		&isuList,
 		"SELECT * FROM `isu` WHERE `jia_user_id` = ? ORDER BY `id` DESC",
 		jiaUserID)
@@ -604,7 +597,7 @@ func getIsuList(c echo.Context) error {
 	if len(isuList) == 0 {
 		return c.JSON(http.StatusOK, responseList)
 	}
-	err = tx.Select(&lastConditions, "SELECT `jia_isu`.`id`,`jia_isu`.`jia_isu_uuid`,`jia_isu`.`timestamp`,`jia_isu`.`is_sitting`,`jia_isu`.`condition`,`jia_isu`.`message`,`jia_isu`.`created_at` FROM (SELECT `id`,`jia_isu_uuid`,`timestamp`,`is_sitting`,`condition`,`message`,`created_at`,ROW_NUMBER() OVER (PARTITION BY `jia_isu_uuid` ORDER BY `timestamp` DESC) as rank FROM `isu_condition` WHERE jia_isu_uuid IN ("+InStatement(len(uuids))+")) AS `jia_isu` WHERE `jia_isu`.`rank` = 1",
+	err = db.Select(&lastConditions, "SELECT `jia_isu`.`id`,`jia_isu`.`jia_isu_uuid`,`jia_isu`.`timestamp`,`jia_isu`.`is_sitting`,`jia_isu`.`condition`,`jia_isu`.`message`,`jia_isu`.`created_at` FROM (SELECT `id`,`jia_isu_uuid`,`timestamp`,`is_sitting`,`condition`,`message`,`created_at`,ROW_NUMBER() OVER (PARTITION BY `jia_isu_uuid` ORDER BY `timestamp` DESC) as rank FROM `isu_condition` WHERE jia_isu_uuid IN ("+InStatement(len(uuids))+")) AS `jia_isu` WHERE `jia_isu`.`rank` = 1",
 		uuids...)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
@@ -648,12 +641,6 @@ func getIsuList(c echo.Context) error {
 			Character:          isu.Character,
 			LatestIsuCondition: formattedCondition}
 		responseList = append(responseList, res)
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
 	}
 
 	return c.JSON(http.StatusOK, responseList)
