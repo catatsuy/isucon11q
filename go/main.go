@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -174,6 +175,65 @@ type JIAServiceRequest struct {
 	IsuUUID       string `json:"isu_uuid"`
 }
 
+type isuCacheSlice struct {
+	// Setが多いならsync.Mutex
+	sync.RWMutex
+	items map[string]map[string]Isu
+}
+
+func NewIsuCache() *isuCacheSlice {
+	m := make(map[string]map[string]Isu)
+	c := &isuCacheSlice{
+		items: m,
+	}
+	return c
+}
+
+func (c *isuCacheSlice) Set(jiaUserID, jiaIsuUUID string, value Isu) {
+	c.Lock()
+	_, ok := c.items[jiaIsuUUID]
+	if !ok {
+		c.items[jiaIsuUUID] = make(map[string]Isu)
+	}
+	c.items[jiaIsuUUID][jiaUserID] = value
+	c.Unlock()
+}
+
+func (c *isuCacheSlice) Get(jiaUserID, jiaIsuUUID string) (Isu, bool) {
+	c.RLock()
+	defer c.RUnlock()
+	v, ok := c.items[jiaIsuUUID]
+	if !ok {
+		return Isu{}, false
+	}
+	vv, ok := v[jiaUserID]
+
+	return vv, ok
+}
+
+func (c *isuCacheSlice) AllUpdateCharacter(jiaIsuUUID, character string) {
+	c.Lock()
+	defer c.Unlock()
+	mm, ok := c.items[jiaIsuUUID]
+	if !ok {
+		return
+	}
+	for k, v := range mm {
+		mm[k] = Isu{
+			ID:         v.ID,
+			JIAIsuUUID: v.JIAIsuUUID,
+			Name:       v.Name,
+			Character:  character,
+			JIAUserID:  v.JIAUserID,
+			CreatedAt:  v.CreatedAt,
+			UpdatedAt:  v.UpdatedAt,
+		}
+	}
+	return
+}
+
+var isuCache = NewIsuCache()
+
 func getEnv(key string, defaultValue string) string {
 	val := os.Getenv(key)
 	if val != "" {
@@ -232,8 +292,8 @@ func main() {
 		e.Debug = false
 		e.Logger.SetLevel(log.OFF)
 
-		//e.Use(middleware.Logger())
-		//e.Use(middleware.Recover())
+		e.Use(middleware.Logger())
+		e.Use(middleware.Recover())
 	}
 
 	e.POST("/initialize", postInitialize)
@@ -376,6 +436,19 @@ func postInitialize(c echo.Context) error {
 	if err != nil {
 		c.Logger().Errorf("db error : %v", err)
 		return c.NoContent(http.StatusInternalServerError)
+	}
+
+	isuList := make([]Isu, 0, 100)
+	err = db.Select(&isuList,
+		"SELECT * FROM `isu`",
+	)
+	if err != nil {
+		c.Logger().Errorf("db error : %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
+
+	for _, isu := range isuList {
+		isuCache.Set(isu.JIAUserID, isu.JIAIsuUUID, isu)
 	}
 
 	return c.JSON(http.StatusOK, InitializeResponse{
@@ -633,7 +706,7 @@ func postIsu(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec("INSERT INTO `isu`"+
+	result, err := tx.Exec("INSERT INTO `isu`"+
 		"	(`jia_isu_uuid`, `name`, `jia_user_id`) VALUES (?, ?, ?)",
 		jiaIsuUUID, isuName, jiaUserID)
 	if err != nil {
@@ -646,6 +719,17 @@ func postIsu(c echo.Context) error {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		c.Logger().Errorf("db error: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
+	isuCache.Set(jiaIsuUUID, jiaUserID, Isu{
+		ID:         int(id),
+		JIAIsuUUID: jiaIsuUUID,
+		Name:       isuName,
+		JIAUserID:  jiaUserID,
+	})
 
 	targetURL := getJIAServiceURL(tx) + "/api/activate"
 	body := JIAServiceRequest{postIsuConditionTargetBaseURL, jiaIsuUUID}
@@ -692,14 +776,11 @@ func postIsu(c echo.Context) error {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
+	isuCache.AllUpdateCharacter(jiaIsuUUID, isuFromJIA.Character)
 
-	var isu Isu
-	err = tx.Get(
-		&isu,
-		"SELECT * FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
-		jiaUserID, jiaIsuUUID)
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
+	isu, ok := isuCache.Get(jiaUserID, jiaIsuUUID)
+
+	if !ok {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
@@ -727,16 +808,10 @@ func getIsuID(c echo.Context) error {
 
 	jiaIsuUUID := c.Param("jia_isu_uuid")
 
-	var res Isu
-	err = db.Get(&res, "SELECT * FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
-		jiaUserID, jiaIsuUUID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return c.String(http.StatusNotFound, "not found: isu")
-		}
+	res, ok := isuCache.Get(jiaUserID, jiaIsuUUID)
 
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
+	if !ok {
+		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
 	return c.JSON(http.StatusOK, res)
@@ -757,16 +832,9 @@ func getIsuIcon(c echo.Context) error {
 
 	jiaIsuUUID := c.Param("jia_isu_uuid")
 
-	var image []byte
-	err = db.Get(&image, "SELECT `image` FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
-		jiaUserID, jiaIsuUUID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return c.String(http.StatusNotFound, "not found: isu")
-		}
-
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
+	_, ok := isuCache.Get(jiaUserID, jiaIsuUUID)
+	if !ok {
+		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
 	f, err := os.Open(frontendContentsPath + "/img/" + jiaIsuUUID)
@@ -774,7 +842,7 @@ func getIsuIcon(c echo.Context) error {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
 	defer f.Close()
-	image, err = ioutil.ReadAll(f)
+	image, err := ioutil.ReadAll(f)
 	if err != nil {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
@@ -1032,18 +1100,10 @@ func getIsuConditions(c echo.Context) error {
 		startTime = time.Unix(startTimeInt64, 0)
 	}
 
-	var isuName string
-	err = db.Get(&isuName,
-		"SELECT name FROM `isu` WHERE `jia_isu_uuid` = ? AND `jia_user_id` = ?",
-		jiaIsuUUID, jiaUserID,
-	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return c.String(http.StatusNotFound, "not found: isu")
-		}
-
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
+	isu, ok := isuCache.Get(jiaUserID, jiaIsuUUID)
+	isuName := isu.Name
+	if !ok {
+		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
 	conditionsResponse, err := getIsuConditionsFromDB(db, jiaIsuUUID, endTime, conditionLevel, startTime, conditionLimit, isuName)
